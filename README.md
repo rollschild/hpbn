@@ -82,7 +82,25 @@
 > Packet loss is OK.
 
 > No bit is faster than one that is not sent; send fewer bits
+
 > We can't make bits travel faster; but we can move the bits closer
+
 > TCP connection reuse is critical to improve performance
 
+## UDP
+
+- **Datagram**
+  - vs. packet
+- used by **DNS**
+- **WebRTC**
+- It's not IP's responsibility to guarantee delivery
+- UDP datagrams have definitive boundaries
+  - each datagram is carried in a single IP packet
+  - each application read yields the full message
+  - datagrams _CANNOT_ be fragmented
+- **NAT**
+  - intermediate timeouts for UDP, even for TCP sometimes
+- No handshake
+- No connection termination
+- Has **NAT Traversal problems**
 -

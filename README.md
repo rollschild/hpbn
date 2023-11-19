@@ -103,4 +103,192 @@
 - No handshake
 - No connection termination
 - Has **NAT Traversal problems**
--
+
+## TLS
+
+- designed to work on top of a _reliable_ transport protocol
+  - TCP
+  - but over UDP is possible - DTLS
+- TLS provides three essential services:
+  - **encryption**
+  - **authentication**
+  - **data integrity**
+- **public (asymmetric) key cryptography**
+- **Message Authentication Code (MAC)**
+  - one-way cryptographic hash function (checksum)
+
+### TLS Handshake
+
+- Things to do:
+  - agree on the version of TLS
+  - choose the ciphersuite
+  - verify certificates
+- `ClientHello` and `ServerHello` are in plain text
+- By default the handshake requires _two_ roundtrips to complete
+  - to optimize, **session resumption** and **false start**
+- use **Diffie-Hellman** key exchange
+  - client and server negotiate a shared secrete without explicitly communicating it in the handshake
+- **Forward Secrecy**: Diffie-Hellman + ephemeral session keys
+- **ALPN (Application Layer Protocol Negotiation)**
+  - TLS extension
+  - introduces support for application protocol negotiation into TLS handshake
+  - client puts `ProtocolNameList` in `ClientHello`
+  - server puts `ProtocolName` in `ServerHello`
+- **SNI (Server Name Indication)**
+  - part of the handshake
+  - TLS + SNI == `Host` header in HTTP
+
+### TLS Session Resumption
+
+- resume/share the _same_ negotiated secret key between multiple connections
+
+#### Session Identifiers - Session Caching
+
+- server creates/sends a 32-byte session identifier as part of `ServerHello`
+  - keeps it in cache
+  - maintains a session cache for _every_ client
+- afterwards, client could store the session ID in `ClientHello` for a _subsequent_ session
+- removes a round trip
+- Most modern browsers intentionally _wait_ for the first TLS connection to complete _before_ opening new connections to the _same_ server
+  - subsequent TLS connections can reuse the SSL session parameters to avoid the costly handshake
+- Requires _careful thinking_ for multi-server deployment
+
+#### Session Tickets - Stateless Resumption
+
+- removes the requirement for server to keep per-client session state
+- server creates a **New Session Ticket** record, encrypted by secret key on server's side
+- session ticket stored on _client only_
+  - included in `SessionTicket` _extension_ within `ClientHello` of a _subsequent_ session
+- all session data stored on client
+- Usecase: deploying session tickets across a set of load-balanced servers
+  - rotating the shared key across all servers periodically
+
+### Chain of Trust and Certificate Authorities
+
+- Root CA
+- **Certificate Revocation List (CRL)**
+
+#### Online Certificate Status Protocol (OCSP)
+
+- check for status of the certificate in real-time
+
+### TLS Record Protocol
+
+- For id-ing different types of messages via the **Content Type** field
+  - handshake
+  - alert
+  - data
+- Max size 16Kb
+- Small records incur a larger overhead due to record framing
+- Large records will have to be delivered and reassembled by TCP layer _before_ they can be processed/delivered
+
+### Optimizing for TLS
+
+- The operational pieces for TLS deployment:
+  - how/where the servers are deployed
+  - size of TLS record
+  - size of memory buffers
+  - size of certificate
+  - support for abbreviated handshakes
+
+#### Early Termination
+
+- up to three roundtrip to set up TCP+TLS session
+- place servers closer to the user!
+- nearby server establishes a pool of long-lived, secure connections to the origin servers
+  - proxy all incoming requests/responses to/from origin servers
+- CDN (or proxy server) can maintain a "warm connection pool" to relay data to origin servers
+
+#### Key Points
+
+- servers with multiple processes/workers should use a shared session cache
+- In a multi-server setup, routing the same client IP or the same TLS session ID to the _same_ server is one way to provide good _session cache utilization_
+- A shared cache should be used between different servers (where "sticky" load balancing is not an option)
+  - secure mechanism needed to share/update secret keys to decrypt the provided session tickets
+
+#### TLS False Start
+
+- _One_ roundtrip handshake for new and repeat visitors
+- optional protocol extension
+- allows sender to send application data when the handshake is only _partially_ complete
+- application data sent alongside `ClientKeyExchange` record
+- _only_ affects the protocol timing of when the application data can be sent
+
+#### TLS Record Size
+
+- max of each record is 16Kb
+- 20 - 40 bytes of overhead for MAC, padding, etc
+- IP and TCP overhead (if record can fit into a single TCP packet)
+  - 20-byte header for IP
+  - 20-byte header for TCP
+- The smaller the record, the higher the framing overhead
+- _NOT_ necessarily a good idea to increase record size to max 16KB
+  - if record spans multiple TCP packets, TLS _must_ wait for _all_ TCP packets to arrive,
+  - _before_ decrypting the data
+  - additional latency!
+- Small records incur overhead; large records incur latency
+- For web applications (consumed by the browser): dynamically adjust record size based on TCP connection state
+  - when
+    - connection is new and TCP congestion window is low, or
+    - connection been idle for some time (**Slow-Start Restart**)
+    - each TCP packet should carry exactly one TLS record, with max segment size (**MSS**) allocated by TCP
+  - when
+    - connection congestion window is large and large stream is being transferred
+    - size of TCP record can be increased to span multiple TCP packets (up to 16KB) to reduce framing and CPU overhead on the client and server
+- Goal - to minimize buffering at the application layer due to lost packets, reordering, and retransmissions
+  - if TCP connection been idle
+  - if slow-start restart is disabled on server
+  - best strategy: decrease record size when sending a new burst of data
+- Small record eliminates unnecessary buffering latency and improves time-to-first-{HTML byte, .., video frame}
+- Larger record optimizes throughput by minimizing overhead of TLS for long-lived streams
+- Typical strategy:
+  - increase record size to up to 16KB after `X` KB of data transferred
+  - reset record size after `Y` milliseconds of idle time
+
+#### TLS Compression
+
+- support for lossless compression of data transferred within record protocol
+- compression algo negotiated during TLS handshake
+- compression applied _prior_ to encryption of each record
+- _HOWEVER_, should be _DISABLED_ on server!
+- Server should be configured to Gzip all text-based assets
+
+#### Certificate-Chain Length
+
+- Should verify server does not forget to include al intermediate certificates during handshake
+  - otherwise browser has to verify itself
+  - a new DNS lookup, TCP connection, HTTP GET request
+- Minimize the size of certificate chain
+- Ideally the sent certificate chain should contain exactly _two_ certificates:
+  - the site's certificate
+  - the CA's intermediary certificate
+- NO NEED for the site to include root certificate of their CA
+
+#### OCSP Stapling
+
+- browser needs to check the certificate is not _revoked_
+- an OCSP request during the verification process for "real-time" check
+- **OCSP Stapling**
+  - server includes (staples) the OCSP response from the CA to its certificate chain
+  - so that browser can skip the online check
+  - server can _cache_ the signed OCSP response
+
+#### HTTP Strict Transport Security (HSTS)
+
+- a security policy mechanism that allows server to declare rules to (compliant) browsers
+  - via HTTP header
+  - `Strict-Transport-Security: max-age=31536000`
+
+#### Performance Checklist
+
+- Enable/configure session caching and stateless resumption
+- Monitor session caching hit rates
+- Configure forward secrecy ciphers to enable TLS False Start
+- Terminate TLS session closer to the user to minimize roundtrip latencies
+- Use dynamic TLS record sizing
+- Ensure your certificate chain does not overflow the initial congestion window
+- Remove unnecessary certificates from chain; minimize the depth
+- Configure OCSP on server
+- Disable TLS compression on server
+- Configure SNI support on server
+- Append **HSTS** header

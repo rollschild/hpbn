@@ -292,3 +292,98 @@
 - Disable TLS compression on server
 - Configure SNI support on server
 - Append **HSTS** header
+
+## HTTP History
+
+- client sends header `Connection: close` to terminate a persistent connection
+- Technically, _either side_ can terminate the connection
+- For HTTP/1.1, `Connection: Keep-Alive` is _not_ needed
+
+## Web Performance
+
+- **Plage Load Time (PLT)**
+  - time to onload event in the browser
+  - fired by browser once the document and all its dependent resources (JavaScript, images, etc) have finished loading
+
+### DOM, CSSOM, and JavaScript
+
+- HTML document parsed -> DOM
+- CSS parsed -> CSSOM
+- DOM + CSSOM -> RenderTree
+- JavaScript can _block_ both DOM and CSSOM
+- Construction of DOM and CSSOM is _interwined_
+  - DOM construction cannot proceed until JS is executed
+  - JS execution cannot proceed untill CSSOM is available
+  - that's why styles are put at top and scripts at the bottom!
+
+### Speed, Performance, Human Perception
+
+- Less than 100ms: instant
+- Less than 20ms to keep users engaged
+- HTML parsing is performed _incrementally_
+- For many requests, response times are often dominated by:
+  - roundtrip latency
+  - server processing time
+- For _most_ web applications,
+  - bandwidth is _not_ the limiting performance factor
+  - the real bottleneck is the network roundtrip latency between client and server
+
+### Performance Pillars: Computing, Rendering, Networking
+
+- Three tasks of a web program:
+  - fetching resources
+  - page layout
+  - JavaScript execution
+- Rendering & scripting
+  - single-threaded
+  - interleaved model of execution
+- bandwidth limited vs. latency limited
+- Number of roundtrips is largely due to handshakes to start communicating between client & server:
+  - DNS, TCP, HTTP
+  - TCP slow start
+
+### Synthetic & Real-User Performance Measurement
+
+- **Navigation Timing**
+- **User Timing**
+- **Resource Timing**
+- via `performance.timing`
+- When analyzing performance data, look at the underlying distribution
+  - _NOT_ the averages
+  - look at histograms, medians, and quantiles
+
+### Browser Optimization
+
+- Two broad classes:
+  - **Document-aware optimization**
+    - resource priority assignments
+    - lookahead parsing
+  - **Speculate optimization**
+    - pre-resolving DNS names
+    - pre-connecting to likely hostnames
+- **Resource pre-fetching and prioritization**
+  - document/CSS/JS parsers
+  - blocking resources required for first rendering are given high priority
+- **DNS pre-resolve**
+  - likely hostnames pre-resolved ahead of time to avoid DNS latency on a future HTTP request
+  - triggered through:
+    - navigation history
+    - user action
+      - hovering over a link
+- **TCP pre-connect**
+  - _following_ a DNS resolution,
+  - browser _may_ speculatively open the TCP connection in an anticipation of an HTTP request
+- **Page pre-rendering**
+  - allows user to hint the likely next destination
+  - pre-renders the entire page in a hidden tab
+- How can we (developers) help?
+  - Critical resources (CSS/JS) should be discovered _as early as possible_ in the document
+  - CSS should be delivered _as early as possible_ to unblock rendering and JS execution
+  - Non-critical JS should be _deferred_ to avoid blocking DOM/CSSOM construction
+  - HTML document parsed _incrementally_ by the parser - document should be _periodically flushed_ for best performance
+  - Hints for browser for additional optimizations:
+    - `<link rel="dns-prefetch" href="//hostname_to_resolve.com">`
+    - `<link rel="subresource" href="//javascript/myapp.js">`
+    - `<link rel="prefetch" href="//images/big.jpeg">`
+    - `<link rel="prerender" href="//example.org/next_page.html">`
+-

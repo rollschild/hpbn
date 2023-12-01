@@ -386,4 +386,108 @@
     - `<link rel="subresource" href="//javascript/myapp.js">`
     - `<link rel="prefetch" href="//images/big.jpeg">`
     - `<link rel="prerender" href="//example.org/next_page.html">`
+
+## HTTP/1.X
+
+### Compared with HTTP/1.0
+
+- Improvements over HTTP/1.0:
+  - persistent connections to allow connection reuse
+  - chunked transfer encoding to allow response streaming
+  - request pipelining to allow parallel request processing
+  - byte serving to allow range-based resource requests
+  - improved (much better-specified) caching mechanisms
+- Networking optimizations:
+  - reduce DNS lookups
+  - Add an **Expires** header and configure **ETags**
+  - Gzip assets
+    - _all_ text-based assets should be compressed with gzipped
+  - Avoid HTTP redirects
+    - especially redirecting to a different hostname - additional DNS lookup, TCP connection latency, etc
+
+### Keepalive Connections
+
+- a.k.a. persistent connection
+- enabled by default on HTTP/1.1
+- `Connection: Keep-Alive`
+- a _strict_ FIFO queuing order on the client:
+  - dispatch request
+  - wait for full response
+  - dispatch _next_ request from the client queue
+
+### HTTP Pipelining
+
+- Allows for relocating the FIFO queue from the client (request queuing) to the server (response queuing)
+- server _could_ process the requests in parallel
+- _However_, data from multiple responses _CANNOT_ be interleaved (multiplexed) on the same connection,
+  - forcing each response to be returned in full before the bytes for the next response can be transferred
+- **Head-of-line** blocking
+- When processing requests in parallel, server must _buffer_ pipelined responses, which may exhaust server resources
+- A failed response may _terminate_ the TCP connection, forcing client to re-request all subsequent resources
+- Not widely enabled
+
+### Using multiple TCP connections
+
+- Up to **6** connections _per host_
+  - _NOTICE_: per host!
+- Reasons to use:
+  - as workaround for limitations of HTTP
+  - as workaround for low starting congestion window size in TCP
+  - as workaround for clients that cannot use TCP window scaling
+
+### Domain Sharding
+
+- increase browser's connection limit
+- more shards, higher parallelism
+- _HOWEVER_, every new hostname:
+  - requires additional DNS lookup
+  - consumes additional resources on both sides for each additional socket
+- In practice, different shards could resolve to the same IP
+  - they are CNAME DNS records
+  - the browser connection limits are enforced on hostnames, _NOT_ IP
+- What affects the optimal number of shards?
+  - number/size/response-time of each resource
+  - client latency & bandwidth
+
+### Measuring/Controlling Protocol Overhead
+
+- Each browser-initiated HTTP request carries at least an additional 500-800 bytes of HTTP metadata
+  - worse - cookies
+- HTTP/1.1 does _not_ define size limit of HTTP headers,
+  - but 8KB or 16KB limit widely adopted
+
+### Concatenation and Spriting
+
+- Bundle multiple resources into a single network request
+- **Concatenation**: multiple JS/CSS files combined into a single resource
+- **Spriting**: multiple images combined
+- Application-level pipelining
+- _NOT_ friendly to caching!
+  - a single update to any one individual file invalidates the cache!
+- Increased memory usage!
+  - all decoded images are stored as memory-backed RGBA bitmaps within browser
+  - one byte for each of the RGBA
+  - 4 bytes for each pixel
+- Affecting execution
+  - JS and CSS parsing & execution is held back _until_ entire file is downloaded
+  - no incremental execution!
+- What is the _ideal_ size for a CSS/JS file?
+  - probably 30 - 50 KB (compressed)
+- Some places considered worth optimizing:
+  - separating and delivering first-paint critical CSS from the rest of CSS
+  - separating and delivering smaller JS chunks for incremental execution
+
+### Resource Inlining
+
+- Embed the resource within document itself
+- using the data URI theme
+- `<img src="data:image/gif;base64,xxxxxxxx" alt="sample image" />`
+- Rule of thumb:
+  - inline resources under 1 - 2 KB
+  - probably _NOT_ for frequently changed resources
+- Considerations:
+  - if files are small and limited to specific pages, consider inlining
+  - if the small files are frequently reused across pages, consider _bundling_
+  - if the small files have high update frequency, keep them separate
+  - Minimize the protocol overhead by reducing the size of HTTP cookies
 -

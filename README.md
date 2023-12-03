@@ -490,4 +490,154 @@
   - if the small files are frequently reused across pages, consider _bundling_
   - if the small files have high update frequency, keep them separate
   - Minimize the protocol overhead by reducing the size of HTTP cookies
--
+
+## HTTP/2
+
+### Design
+
+- **Binary Framing Layer**
+- **frame** - smallest unit of communication in HTTP/2
+  - contains frame header
+  - may be interleaved across different streams
+  - reassembled via the embedded stream identifier in the header of each frame
+- **stream** - bidirectional flow of bytes within an established connection
+  - carrying one or more messages
+- **message** - a complete sequence of frames that map to a logical request/response
+- _ALL_ communication performed over a single TCP connection that can carry any number of bidirectional streams
+- Each stream has:
+  - a unique identifier
+  - optional priority information
+
+#### Request and Response Multiplexing
+
+- HTTP/2 enables full request/response multiplexing
+
+#### Stream Prioritization
+
+- Each stream may be assigned an integer weight between `1` and `256`
+- Each stream may be given an explicit dependency on another stream
+- **prioritization tree**
+  - dependency: referencing the other stream's ID as parent
+  - streams do not depend on each other have a implicit _root_ stream
+  - _if possible_, parent stream should be allocated resources ahead of its dependencies
+    - e.g. deliver response `<parent>` before response `<child>`
+- streams with the same parent (siblings) should be allocated resources in proportion to their weight
+- client is allowed to update preferences (dependencies & weights) at any point
+- Browser request prioritization
+  - can learn priority from previous visits
+  - if rendering was blocked on a certain asset in a previous visit, then
+    - the same asset _may be_ prioritized higher in the future
+
+#### One Connection Per Origin
+
+- HTTP/2 connections are persistent
+- only one connection per origin
+
+#### Downsides and Tradeoffs
+
+- using one TCP connection per origin:
+  - still head-of-line blocking at TCP level
+  - when packet loss occurs, TCP congestion window size is reduced
+    - reduces max throughput of the entire connection
+  - effects of bandwidth-delay product may limit connection throughput if TCP window scaling is disabled
+- What if multiple connections per origin?
+  - less effective header compression due to distinct compression contexts
+  - less effective request prioritization due to distinct TCP streams
+  - less effective utilization of each TCP stream
+  - higher likelihood of congestion due to more competing flows
+  - increased resource overhead due to more TCP flows
+
+### Flow Control
+
+- flow control is _directional_
+  - each receiver may choose to set any window size for each stream and the entire connection
+- flow control is credit-based
+  - each receiver advertises initial connection and stream flow control window (bytes)
+  - window reduced whenever sender emits a `DATA` frame
+  - incremented via `WINDOW_UPDATE` frame sent by receiver
+- flow control _CANNOT_ be disabled
+  - when HTTP/2 connection is established, `SETTINGS` frames exchanged between client and server
+  - set flow control window sizes in _both_ directions
+  - default value for **flow control window** is `65535` bytes
+  - maintained by `WINDOW_UPDATE` frame whenever any data received
+- flow control is _hop-by-hop_
+
+#### Server Push
+
+- server can send _multiple_ responses for a single client request
+- one-to-many
+- server-initiated push
+- server initiates new streams (**promises**) for push resources
+  - NOTE these are _NEW_ streams!
+- Inlining resources is actually server push
+- Pushed resources can be:
+  - cached by client
+  - reused across different pages
+  - multiplexed alongside other resources
+  - prioritized by server
+  - declined by client
+- Security policy:
+  - pushed resources must obey **same-origin**: server must be authoritative for the provided content
+- `PUSH_PROMISE`
+  - all server push streams are initiated with `PUSH_PROMISE` frames
+  - delivery order is critical!
+    - client needs to know which resources the server intends to push
+    - to solve this, server sends _all_ `PUSH_PROMISE` frames, which contain just the HTTP headers of the promised resource
+      - ahead of the parent's response (i.e. `DATA` frames)
+  - clients can reject using `RST_STREAM`
+
+### Header Compression
+
+- request/response headers compressed using **HPACK** compression format
+- Allows individual values to be compressed when transferred,
+  - the indexed list of previously transferred values allows for encoding duplicate values by
+    - transferring index values that can be used to
+    - efficiently look up and reconstruct the full header keys and values
+- **static table** & **dynamic table**
+  - static table
+    - defined in specification
+    - provides list of common HTTP header fields
+  - dynamic table
+    - initially empty
+    - updated based on exchanged values within a particular connection
+- To negotiate HTTP/2 protocol
+  - TLS & ALPN is recommended
+  - client & server negotiate the desired protocol as part of TLS handshake
+  - without adding extra latency/roundtrips
+- Establishing HTTP/2 connection over a regular, non-encrypted channel is still _possible_
+  - use **HTTP `Upgrade`**
+  - `Connection: Upgrade, HTTP2-Settings`
+  - `Upgrade: h2c` - initial HTTP/1.1 request with HTTP/2 upgrade header
+  - server could:
+    - reject by returning `HTTP/1.1 200 OK`
+    - accept by `HTTP1.1 101 Switching Protocols`
+      - then immediately switch to HTTP/2
+      - return response using the new binary framing protocol
+
+### Binary Framing
+
+- **frames** exchanged between client & server
+- all frames have a 9-byte header
+  - 24-bit length field
+    - theoretical 2^24 bytes (16MB) data per frame
+    - _but_ default is 2^14 bytes (16KB)
+    - bigger is _NOT_ always better!
+  - 8-bit type field
+    - format
+    - semantics
+  - 8-bit flag field
+  - 1-bit reserve field - always set to 0
+  - 31-bit stream identifier, uniquely identifying the HTTP/2 stream
+
+### Initiating a New Stream
+
+- client initiates by sending a `HEADERS` frame
+- payload in `DATA` frames
+- flow control is applied _only_ to `DATA` frames
+- non-`DATA` frames always processed with high priority!
+- To eliminate stream ID collisions between client- and server- initiated streams:
+  - client-initiated streams have odd IDs
+  - server-initiated streams have even IDs
+- payload can be split into multiple `DATA` frames
+  - last framing contains `END_STREAM` indicating end of the message
+  -

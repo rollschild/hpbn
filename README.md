@@ -640,4 +640,92 @@
   - server-initiated streams have even IDs
 - payload can be split into multiple `DATA` frames
   - last framing contains `END_STREAM` indicating end of the message
-  -
+
+## Optimizing Application Delivery
+
+### Best Practices
+
+- Reduce DNS lookups
+- Reuse TCP connections
+  - keepalive wherever possible
+- Minimize number of HTTP redirects
+  - redirect to a different origin can result in DNS, TCP, TLS roundtrips
+- Reduce roundtrip times
+- Eliminate unnecessary resources
+- Cache resources on the client
+- Compress assets during transfer
+- Eliminate unnecessary request bytes
+  - HTTP cookies
+- Parallelize request/response processing
+- Apply protocol-specific optimizations
+
+### Cache Resources on Client
+
+- You should specify _both_:
+  - `Cache-Control` - cache lifetime
+  - `Last-Modified` & `ETag` - validation
+
+### Compress Transferred Data
+
+- gzip
+
+### Eliminate unnecessary request bytes
+
+- **HTTP State Management Mechanism**
+  - extension to HTTP
+  - allows for cookies
+  - saved by browser
+  - auto appended onto every request to the origin within the `Cookie` header
+- allowed to associate many cookies per origin
+- Best practices:
+  - Transfer the min amount of required data (e.g. secure session token)
+  - leverage **shared session cache** on server to lookup other metadata
+
+### Parallelize request/response processing
+
+- without `Keep-Alive`, a new TCP connection is required for each HTTP request
+
+### Optimizing Resource loading in Browser
+
+- browser uses a **preload scanner**
+  - _only when_ the document parser is blocked
+  - _HOWEVER_, _NOT_ applicable for resources scheduled via JS
+  - it cannot speculatively execute scripts
+
+### Optimizing for HTTP/1.X
+
+- Leverage HTTP pipelining
+  - if, you control both client and server
+- Domain sharding
+- Bundle resources to reduce HTTP requests
+- Inline small resources
+
+### Optimizing for HTTP/2
+
+- requests are cheap
+- both requests & responses can be multiplexed efficiently
+- **Domain sharding** is _anti pattern_!
+- HTTP/2 has a **connection-coalescing** mechanism
+  - allows client to
+    - coalesce requests from different origins
+    - then dispatch them over _the same_ connection when the following conditions are satisfied:
+  - origins are covered by same TLS certificate
+    - wildcard certificate, or
+    - certificate with matching **Subject Alternative Names**
+  - origins resolve to the same server IP address
+
+### Eliminate Roundtrips with Server Push
+
+- resource inlining is a form of application-layer server push
+- with HTTP/2, no longer a reason to inline resources _just because_ they are small
+- more of latency optimization
+- prime candidates:
+  - critical resources that block page construction
+- Client can control how/where server push is used, by indicating to server:
+  - the max number of pushed streams initiated by server
+  - amount of data can be sent on each stream before acknowledged by client
+- server push subject to same-origin restrictions
+- server can learn from `Referrer` headers
+  - and auto initiate server push for related resources
+- A well-implemented server should give precedence to high priority streams, but
+  - should also interleave lower priority streams if all higher priority streams are blocked (head-of-line blocking)

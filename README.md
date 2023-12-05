@@ -729,3 +729,42 @@
   - and auto initiate server push for related resources
 - A well-implemented server should give precedence to high priority streams, but
   - should also interleave lower priority streams if all higher priority streams are blocked (head-of-line blocking)
+
+## Primer on Browser Networking
+
+### Connection Management & Optimization
+
+- Browser _intentionally_ separates **request management** lifecycle from **socket management**
+- sockets are organized in **pools**
+  - grouped by origin
+  - same sockets can be automatically reused across multiple requests
+- **Origin** - the combination of:
+  - application protocol
+  - domain name
+  - port number
+- **Socket pool**
+  - group of sockets belonging to _the same_ origin
+  - in practice, all browsers limit max pool size to 6 sockets
+- With **Automatic socket pooling**, browser can:
+  - service queued requests in priority order
+  - reuse sockets to minimize latency and improve throughput
+  - be proactive in opening sockets in anticipation of request
+  - optimize when idle sockets are closed
+  - optimize bandwidth allocation across all sockets
+- ^^^ these are managed by the browser!!!
+
+### Network Security and Sandboxing
+
+- Defer management of individual sockets:
+  - allows browser to sandbox and enforce a consistent set of security and policy constraints on untrusted code
+- **Connection limits**
+  - browser manages all open socket pools
+  - browser enforces connection limits to protect both client and server
+- **Request formatting & response processing**
+- **TLS negotiation**
+- **Same-origin policy**
+
+### Resource and Client State Caching
+
+- Browser provides authentication, session, and cookie management
+- browser maintains _separate_ "cookie jars" for each origin,
